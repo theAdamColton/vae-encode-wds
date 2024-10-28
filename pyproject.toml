@@ -1,0 +1,24 @@
+[project]
+name = "vae-encode-wds"
+version = "0.1.0"
+description = "Use a variational auto encoder to encode images to latents and save them as a webdataset"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "accelerate>=1.0.1",
+    "diffusers>=0.31.0",
+    "jsonargparse>=4.33.2",
+    "numpy>=2.1.2",
+    "openexr>=3.3.1",
+    "pandas>=2.2.3",
+    "pillow>=11.0.0",
+    "safetensors>=0.4.5",
+    "torch>=2.5.0",
+    "torchvision>=0.20.0",
+    "webdataset>=0.2.100",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "bpython>=0.24",
+]

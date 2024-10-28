@@ -1,0 +1,10 @@
+__pycache__/
+/models/
+*.egg-info/
+*.spec
+build/
+dist/
+wandb/
+out/
+.venv
+testoutput/
