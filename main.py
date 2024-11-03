@@ -1,11 +1,13 @@
 from tqdm import tqdm
 import numpy as np
+from torch.utils.data import DataLoader
 import io
 from pathlib import Path
 import torch
 import numpy as np
 from diffusers.models.autoencoders.autoencoder_kl import AutoencoderKL
 import jsonargparse
+from torchvision.transforms import Resize
 import webdataset as wds
 import pandas as pd
 from PIL import Image
@@ -19,20 +21,36 @@ def pil2torch(b):
     return im
 
 
+class ResizeToMult(torch.nn.Module):
+    def __init__(self, mult):
+        super().__init__()
+        self.mult = mult
+
+    def forward(self, im):
+        c, h, w = im.shape
+        nh = int(round(h / self.mult) * self.mult)
+        nw = int(round(w / self.mult) * self.mult)
+        im = Resize((nh, nw))(im)
+        return im
+
+
 @torch.inference_mode()
 def main(
     vae_url: str,
     data_url: str,
     out_path: Path,
-    device="cuda",
+    device: str = "cuda",
     dtype=torch.bfloat16,
-    image_column_name="jpg",
+    image_column_name: str = "jpg",
+    enable_tile_thresh: int = 1024,
+    downscale_factor: int = 8,
 ):
     vae: AutoencoderKL = AutoencoderKL.from_pretrained(
         vae_url,
         torch_dtype=dtype,
     ).to(device=device, dtype=dtype)
-    vae.enable_slicing()
+    # vae.enable_slicing()
+    vae.enable_tiling()
     vae.decoder = None
 
     shards = list(wds.SimpleShardList(data_url))
@@ -48,7 +66,13 @@ def main(
 
     for shard in shards:
         shard = shard["url"]
-        ds = wds.WebDataset(shard, shardshuffle=False)
+        ds = (
+            wds.WebDataset(shard, shardshuffle=False)
+            .rename(image=image_column_name)
+            .map_dict(image=pil2torch)
+            .map_dict(image=ResizeToMult(downscale_factor))
+        )
+        ds = DataLoader(ds, num_workers=1, batch_size=None, collate_fn=None)
 
         in_shard_path = Path(shard)
 
@@ -62,11 +86,19 @@ def main(
         out_shard_path = out_path / shard_name
         with wds.TarWriter(str(out_shard_path)) as writer:
             for row in tqdm(ds):
-                image = row.pop(image_column_name)
-                image = pil2torch(image)
+                image = row.pop("image")
                 image = image.to(dtype=dtype, device=device) / 255
                 image = image * 2 - 1
+
+                _, h, w = image.shape
+
                 latent = vae.encode(image.unsqueeze(0)).latent_dist.mean.squeeze(0)
+
+                _, lh, lw = latent.shape
+
+                assert h // lh == downscale_factor
+                assert w // lw == downscale_factor
+
                 latent = latent.to(torch.float16).cpu().numpy()
                 row["latent.npy"] = latent
 
