@@ -32,16 +32,22 @@ def main(
         vae_url,
         torch_dtype=dtype,
     ).to(device=device, dtype=dtype)
+    vae.enable_slicing()
     vae.decoder = None
 
     shards = list(wds.SimpleShardList(data_url))
 
     out_path.mkdir(exist_ok=True)
     progress_path = out_path / "progress.csv"
-    progress = pd.read_csv(progress_path)
-    completed_shard_names = set(progress.shard_name)
+
+    if progress_path.exists():
+        progress = pd.read_csv(progress_path)
+        completed_shard_names = set(progress.shard_name)
+    else:
+        completed_shard_names = set()
 
     for shard in shards:
+        shard = shard["url"]
         ds = wds.WebDataset(shard, shardshuffle=False)
 
         in_shard_path = Path(shard)
@@ -51,12 +57,14 @@ def main(
             print("Skipping", shard_name)
             continue
 
-        out_shard_path = out_path / in_shard_path.name
+        print("Processing", shard_name)
+
+        out_shard_path = out_path / shard_name
         with wds.TarWriter(str(out_shard_path)) as writer:
             for row in tqdm(ds):
                 image = row.pop(image_column_name)
                 image = pil2torch(image)
-                image = image.to(dtype) / 255
+                image = image.to(dtype=dtype, device=device) / 255
                 image = image * 2 - 1
                 latent = vae.encode(image.unsqueeze(0)).latent_dist.mean.squeeze(0)
                 latent = latent.to(torch.float16).cpu().numpy()
